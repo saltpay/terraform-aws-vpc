@@ -1,6 +1,7 @@
 locals {
   max_subnet_length = max(
     length(var.private_subnets),
+    length(var.messaging_subnets),
     length(var.elasticache_subnets),
     length(var.database_subnets),
     length(var.redshift_subnets),
@@ -378,6 +379,33 @@ resource "aws_subnet" "private" {
   )
 }
 
+#################
+# Messaging subnet
+#################
+resource "aws_subnet" "messaging" {
+  count = var.create_vpc && length(var.messaging_subnets) > 0 ? length(var.messaging_subnets) : 0
+
+  vpc_id                          = local.vpc_id
+  cidr_block                      = var.messaging_subnets[count.index]
+  availability_zone               = length(regexall("^[a-z]{2}-", element(var.azs, count.index))) > 0 ? element(var.azs, count.index) : null
+  availability_zone_id            = length(regexall("^[a-z]{2}-", element(var.azs, count.index))) == 0 ? element(var.azs, count.index) : null
+  assign_ipv6_address_on_creation = var.messaging_subnet_assign_ipv6_address_on_creation == null ? var.assign_ipv6_address_on_creation : var.messaging_subnet_assign_ipv6_address_on_creation
+
+  ipv6_cidr_block = var.enable_ipv6 && length(var.messaging_subnet_ipv6_prefixes) > 0 ? cidrsubnet(aws_vpc.this[0].ipv6_cidr_block, 8, var.messaging_subnet_ipv6_prefixes[count.index]) : null
+
+  tags = merge(
+    {
+      "Name" = format(
+        "%s-${var.messaging_subnet_suffix}-%s",
+        var.name,
+        element(var.azs, count.index),
+      )
+    },
+    var.tags,
+    var.messaging_subnet_tags,
+  )
+}
+
 ##################
 # Database subnet
 ##################
@@ -540,6 +568,7 @@ resource "aws_default_network_acl" "this" {
     compact(flatten([
       aws_subnet.public.*.id,
       aws_subnet.private.*.id,
+      aws_subnet.messaging.*.id,
       aws_subnet.intra.*.id,
       aws_subnet.database.*.id,
       aws_subnet.redshift.*.id,
@@ -548,6 +577,7 @@ resource "aws_default_network_acl" "this" {
     compact(flatten([
       aws_network_acl.public.*.subnet_ids,
       aws_network_acl.private.*.subnet_ids,
+      aws_network_acl.messaging.*.id,
       aws_network_acl.intra.*.subnet_ids,
       aws_network_acl.database.*.subnet_ids,
       aws_network_acl.redshift.*.subnet_ids,
@@ -697,6 +727,57 @@ resource "aws_network_acl_rule" "private_outbound" {
   ipv6_cidr_block = lookup(var.private_outbound_acl_rules[count.index], "ipv6_cidr_block", null)
 }
 
+#######################
+# Messaging Network ACLs
+#######################
+resource "aws_network_acl" "messaging" {
+  count = var.create_vpc && var.messaging_dedicated_network_acl && length(var.messaging_subnets) > 0 ? 1 : 0
+
+  vpc_id     = element(concat(aws_vpc.this.*.id, [""]), 0)
+  subnet_ids = aws_subnet.messaging.*.id
+
+  tags = merge(
+    {
+      "Name" = format("%s-${var.messaging_subnet_suffix}", var.name)
+    },
+    var.tags,
+    var.messaging_acl_tags,
+  )
+}
+
+resource "aws_network_acl_rule" "messaging_inbound" {
+  count = var.create_vpc && var.messaging_dedicated_network_acl && length(var.messaging_subnets) > 0 ? length(var.messaging_inbound_acl_rules) : 0
+
+  network_acl_id = aws_network_acl.messaging[0].id
+
+  egress          = false
+  rule_number     = var.messaging_inbound_acl_rules[count.index]["rule_number"]
+  rule_action     = var.messaging_inbound_acl_rules[count.index]["rule_action"]
+  from_port       = lookup(var.messaging_inbound_acl_rules[count.index], "from_port", null)
+  to_port         = lookup(var.messaging_inbound_acl_rules[count.index], "to_port", null)
+  icmp_code       = lookup(var.messaging_inbound_acl_rules[count.index], "icmp_code", null)
+  icmp_type       = lookup(var.messaging_inbound_acl_rules[count.index], "icmp_type", null)
+  protocol        = var.messaging_inbound_acl_rules[count.index]["protocol"]
+  cidr_block      = lookup(var.messaging_inbound_acl_rules[count.index], "cidr_block", null)
+  ipv6_cidr_block = lookup(var.messaging_inbound_acl_rules[count.index], "ipv6_cidr_block", null)
+}
+
+resource "aws_network_acl_rule" "messaging_outbound" {
+  count = var.create_vpc && var.messaging_dedicated_network_acl && length(var.messaging_subnets) > 0 ? length(var.messaging_outbound_acl_rules) : 0
+
+  network_acl_id = aws_network_acl.messaging[0].id
+
+  egress          = true
+  rule_number     = var.messaging_outbound_acl_rules[count.index]["rule_number"]
+  rule_action     = var.messaging_outbound_acl_rules[count.index]["rule_action"]
+  from_port       = lookup(var.messaging_outbound_acl_rules[count.index], "from_port", null)
+  to_port         = lookup(var.messaging_outbound_acl_rules[count.index], "to_port", null)
+  icmp_code       = lookup(var.messaging_outbound_acl_rules[count.index], "icmp_code", null)
+  icmp_type       = lookup(var.messaging_outbound_acl_rules[count.index], "icmp_type", null)
+  protocol        = var.messaging_outbound_acl_rules[count.index]["protocol"]
+  cidr_block      = lookup(var.messaging_outbound_acl_rules[count.index], "cidr_block", null)
+  ipv6_cidr_block = lookup(var.messaging_outbound_acl_rules[count.index], "ipv6_cidr_block", null)
+}
 ########################
 # Intra Network ACLs
 ########################
@@ -995,6 +1076,16 @@ resource "aws_route_table_association" "private" {
   count = var.create_vpc && length(var.private_subnets) > 0 ? length(var.private_subnets) : 0
 
   subnet_id = element(aws_subnet.private.*.id, count.index)
+  route_table_id = element(
+    aws_route_table.private.*.id,
+    var.single_nat_gateway ? 0 : count.index,
+  )
+}
+
+resource "aws_route_table_association" "messaging" {
+  count = var.create_vpc && length(var.messaging_subnets) > 0 ? length(var.messaging_subnets) : 0
+
+  subnet_id = element(aws_subnet.messaging.*.id, count.index)
   route_table_id = element(
     aws_route_table.private.*.id,
     var.single_nat_gateway ? 0 : count.index,
