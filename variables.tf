@@ -34,6 +34,12 @@ variable "messaging_subnet_ipv6_prefixes" {
   default     = []
 }
 
+variable "borgun_subnet_ipv6_prefixes" {
+  description = "Assigns IPv6 messaging subnet id based on the Amazon provided /56 prefix base 10 integer (0-256). Must be of equal length to the corresponding IPv4 subnet list"
+  type        = list(string)
+  default     = []
+}
+
 variable "public_subnet_ipv6_prefixes" {
   description = "Assigns IPv6 public subnet id based on the Amazon provided /56 prefix base 10 integer (0-256). Must be of equal length to the corresponding IPv4 subnet list"
   type        = list(string)
@@ -77,6 +83,12 @@ variable "private_subnet_assign_ipv6_address_on_creation" {
 }
 
 variable "messaging_subnet_assign_ipv6_address_on_creation" {
+  description = "Assign IPv6 address on messaging subnet, must be disabled to change IPv6 CIDRs. This is the IPv6 equivalent of map_public_ip_on_launch"
+  type        = bool
+  default     = null
+}
+
+variable "borgun_subnet_assign_ipv6_address_on_creation" {
   description = "Assign IPv6 address on messaging subnet, must be disabled to change IPv6 CIDRs. This is the IPv6 equivalent of map_public_ip_on_launch"
   type        = bool
   default     = null
@@ -142,6 +154,12 @@ variable "messaging_subnet_suffix" {
   default     = "messaging"
 }
 
+variable "borgun_subnet_suffix" {
+  description = "Suffix to append to messaging subnets name"
+  type        = string
+  default     = "borgun"
+}
+
 variable "intra_subnet_suffix" {
   description = "Suffix to append to intra subnets name"
   type        = string
@@ -180,6 +198,12 @@ variable "private_subnets" {
 
 variable "messaging_subnets" {
   description = "A list of messaging subnets inside the VPC"
+  type        = list(string)
+  default     = []
+}
+
+variable "borgun_subnets" {
+  description = "A list of borgun subnets inside the VPC"
   type        = list(string)
   default     = []
 }
@@ -1925,6 +1949,12 @@ variable "enable_vpn_gateway" {
   default     = false
 }
 
+variable "enable_vpn_gateway_secondary" {
+  description = "Should be true if you want to create a new VPN Gateway resource and attach it to the VPC"
+  type        = bool
+  default     = false
+}
+
 variable "vpn_gateway_id" {
   description = "ID of VPN Gateway to attach to the VPC"
   type        = string
@@ -1941,6 +1971,12 @@ variable "vpn_gateway_az" {
   description = "The Availability Zone for the VPN Gateway"
   type        = string
   default     = null
+}
+
+variable "propagate_borgun_route_tables_vgw" {
+  description = "Should be true if you want route table propagation"
+  type        = bool
+  default     = false
 }
 
 variable "propagate_intra_route_tables_vgw" {
@@ -1997,6 +2033,12 @@ variable "messaging_subnet_tags" {
   default     = {}
 }
 
+variable "borgun_subnet_tags" {
+  description = "Additional tags for the messaging subnets"
+  type        = map(string)
+  default     = {}
+}
+
 variable "public_route_table_tags" {
   description = "Additional tags for the public route tables"
   type        = map(string)
@@ -2010,6 +2052,12 @@ variable "private_route_table_tags" {
 }
 
 variable "messaging_route_table_tags" {
+  description = "Additional tags for the messaging route tables"
+  type        = map(string)
+  default     = {}
+}
+
+variable "borgun_route_table_tags" {
   description = "Additional tags for the messaging route tables"
   type        = map(string)
   default     = {}

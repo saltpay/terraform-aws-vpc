@@ -2,6 +2,7 @@ locals {
   max_subnet_length = max(
     length(var.private_subnets),
     length(var.messaging_subnets),
+    length(var.borgun_subnets),
     length(var.elasticache_subnets),
     length(var.database_subnets),
     length(var.redshift_subnets),
@@ -324,6 +325,23 @@ resource "aws_route_table" "intra" {
   )
 }
 
+#################
+# Borgun routes
+#################
+resource "aws_route_table" "borgun" {
+  count = var.create_vpc && length(var.borgun_subnets) > 0 ? 1 : 0
+
+  vpc_id = aws_vpc_ipv4_cidr_block_association.this[0].vpc_id
+
+  tags = merge(
+    {
+      "Name" = "${var.name}-${var.borgun_subnet_suffix}"
+    },
+    var.tags,
+    var.borgun_route_table_tags,
+  )
+}
+
 ################
 # Public subnet
 ################
@@ -405,6 +423,34 @@ resource "aws_subnet" "messaging" {
     var.messaging_subnet_tags,
   )
 }
+
+#################
+# Borgun subnet #
+#################
+resource "aws_subnet" "borgun" {
+  count = var.create_vpc && length(var.borgun_subnets) > 0 ? length(var.borgun_subnets) : 0
+
+  vpc_id                          = aws_vpc_ipv4_cidr_block_association.this[0].vpc_id
+  cidr_block                      = var.borgun_subnets[count.index]
+  availability_zone               = length(regexall("^[a-z]{2}-", element(var.azs, count.index))) > 0 ? element(var.azs, count.index) : null
+  availability_zone_id            = length(regexall("^[a-z]{2}-", element(var.azs, count.index))) == 0 ? element(var.azs, count.index) : null
+  assign_ipv6_address_on_creation = var.borgun_subnet_assign_ipv6_address_on_creation == null ? var.assign_ipv6_address_on_creation : var.borgun_subnet_assign_ipv6_address_on_creation
+
+  ipv6_cidr_block = var.enable_ipv6 && length(var.borgun_subnet_ipv6_prefixes) > 0 ? cidrsubnet(aws_vpc.this[0].ipv6_cidr_block, 8, var.borgun_subnet_ipv6_prefixes[count.index]) : null
+
+  tags = merge(
+    {
+      "Name" = format(
+        "%s-${var.borgun_subnet_suffix}-%s",
+        var.name,
+        element(var.azs, count.index),
+      )
+    },
+    var.tags,
+    var.borgun_subnet_tags,
+  )
+}
+
 
 ##################
 # Database subnet
@@ -569,6 +615,7 @@ resource "aws_default_network_acl" "this" {
       aws_subnet.public.*.id,
       aws_subnet.private.*.id,
       aws_subnet.messaging.*.id,
+      aws_subnet.borgun.*.id,
       aws_subnet.intra.*.id,
       aws_subnet.database.*.id,
       aws_subnet.redshift.*.id,
@@ -578,6 +625,7 @@ resource "aws_default_network_acl" "this" {
       aws_network_acl.public.*.subnet_ids,
       aws_network_acl.private.*.subnet_ids,
       aws_network_acl.messaging.*.id,
+      aws_subnet.borgun.*.id,
       aws_network_acl.intra.*.subnet_ids,
       aws_network_acl.database.*.subnet_ids,
       aws_network_acl.redshift.*.subnet_ids,
@@ -1092,6 +1140,16 @@ resource "aws_route_table_association" "messaging" {
   )
 }
 
+resource "aws_route_table_association" "borgun" {
+  count = var.create_vpc && length(var.borgun_subnets) > 0 ? length(var.borgun_subnets) : 0
+
+  subnet_id = element(aws_subnet.borgun.*.id, count.index)
+  route_table_id = element(
+    aws_route_table.private.*.id,
+    var.single_nat_gateway ? 0 : count.index,
+  )
+}
+
 resource "aws_route_table_association" "database" {
   count = var.create_vpc && length(var.database_subnets) > 0 ? length(var.database_subnets) : 0
 
@@ -1172,9 +1230,9 @@ resource "aws_customer_gateway" "this" {
 # VPN Gateway
 ##############
 resource "aws_vpn_gateway" "this" {
-  count = var.create_vpc && var.enable_vpn_gateway ? 1 : 0
+  count = var.create_vpc && (var.enable_vpn_gateway || var.enable_vpn_gateway_secondary) ? 1 : 0
 
-  vpc_id            = local.vpc_id
+  vpc_id            = var.enable_vpn_gateway_secondary ? aws_vpc_ipv4_cidr_block_association.this[0].vpc_id : local.vpc_id
   amazon_side_asn   = var.amazon_side_asn
   availability_zone = var.vpn_gateway_az
 
@@ -1185,13 +1243,26 @@ resource "aws_vpn_gateway" "this" {
     var.tags,
     var.vpn_gateway_tags,
   )
-}
+} 
 
 resource "aws_vpn_gateway_attachment" "this" {
   count = var.vpn_gateway_id != "" ? 1 : 0
 
-  vpc_id         = local.vpc_id
+  vpc_id         = var.enable_vpn_gateway_secondary ? aws_vpc_ipv4_cidr_block_association.this[0].vpc_id : local.vpc_id
   vpn_gateway_id = var.vpn_gateway_id
+}
+
+resource "aws_vpn_gateway_route_propagation" "borgun" {
+  count = var.create_vpc && var.propagate_borgun_route_tables_vgw && (var.enable_vpn_gateway || var.enable_vpn_gateway_secondary || var.vpn_gateway_id != "") ? 1 : 0
+
+  route_table_id = element(aws_route_table.borgun.*.id, count.index)
+  vpn_gateway_id = element(
+    concat(
+      aws_vpn_gateway.this.*.id,
+      aws_vpn_gateway_attachment.this.*.vpn_gateway_id,
+    ),
+    count.index,
+  )
 }
 
 resource "aws_vpn_gateway_route_propagation" "public" {
