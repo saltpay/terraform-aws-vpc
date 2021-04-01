@@ -58,6 +58,10 @@ output "vpc_ipv6_cidr_block" {
   value       = concat(aws_vpc.this.*.ipv6_cidr_block, [""])[0]
 }
 
+output "vpc_secondary_cidr_vpc_id" {
+  description = "List of VPC IDs for secondary CIDR blocks"
+  value       = aws_vpc_ipv4_cidr_block_association.this.*.vpc_id
+}
 output "vpc_secondary_cidr_blocks" {
   description = "List of secondary CIDR blocks of the VPC"
   value       = aws_vpc_ipv4_cidr_block_association.this.*.cidr_block
@@ -71,6 +75,11 @@ output "vpc_owner_id" {
 output "private_subnets" {
   description = "List of IDs of private subnets"
   value       = aws_subnet.private.*.id
+}
+
+output "borgun_subnets" {
+  description = "List of IDs of Borgun subnets"
+  value       = aws_subnet.borgun.*.id
 }
 
 output "private_subnet_arns" {
